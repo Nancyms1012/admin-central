@@ -112,40 +112,40 @@ export default function AdminCentral() {
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {/* Formulario de Inscripciones */}
+          {/* Dorsales */}
           <ModuleCard
-            title="Formulario"
-            description="Gestión de inscripciones, admin panel, export"
-            icon="📝"
-            color="from-blue-500 to-blue-600"
-            url="https://inscripciones.raceclubhub.com"
+            title="Dorsales"
+            description="Importar CSV y asignar dorsales"
+            icon="🏷️"
+            color="from-red-500 to-red-600"
+            url="/dorsales"
             status="active"
           />
 
-          {/* Check-in App */}
-          <ModuleCard
-            title="Check-in"
-            description="Escaneo QR, plantilla, subir dorsales"
-            icon="📱"
-            color="from-green-500 to-green-600"
-            url="https://checkin.raceclubhub.com"
-            status="active"
-          />
-
-          {/* Boxes App */}
+          {/* Boxes */}
           <ModuleCard
             title="Boxes"
-            description="Parrilla de salida, SPEAKER, DNS"
-            icon="📊"
-            color="from-amber-500 to-amber-600"
-            url="https://boxes.raceclubhub.com"
+            description="Crear parrilla de salida"
+            icon="📋"
+            color="from-orange-500 to-orange-600"
+            url="/boxes"
+            status="active"
+          />
+
+          {/* Formulario de Inscripciones */}
+          <ModuleCard
+            title="Inscripciones"
+            description="Admin de inscripciones"
+            icon="📝"
+            color="from-blue-500 to-blue-600"
+            url="https://inscripciones.raceclubhub.com/admin"
             status="active"
           />
 
           {/* Control de Evento */}
           <ModuleCard
             title="Control"
-            description="Control de carreras XCC/XCO en vivo"
+            description="Control de carreras XCC/XCO"
             icon="🎯"
             color="from-purple-500 to-purple-600"
             url="https://control.raceclubhub.com"
@@ -219,11 +219,14 @@ function ModuleCard({
     inactive: 'Inactivo',
   }[status];
 
+  const isExternal = url.startsWith('http');
+  const Component = isExternal ? 'a' : 'a';
+
   return (
-    <a
+    <Component
       href={status === 'active' ? url : '#'}
-      target={status === 'active' ? '_blank' : undefined}
-      rel={status === 'active' ? 'noopener noreferrer' : undefined}
+      target={isExternal && status === 'active' ? '_blank' : undefined}
+      rel={isExternal && status === 'active' ? 'noopener noreferrer' : undefined}
       className={`bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition-shadow ${
         status === 'active' ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'
       }`}
@@ -240,6 +243,6 @@ function ModuleCard({
         </div>
         <p className="text-sm text-gray-600">{description}</p>
       </div>
-    </a>
+    </Component>
   );
 }
