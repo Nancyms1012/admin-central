@@ -1,13 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
 
 export default function AdminCentral() {
   const [autenticado, setAutenticado] = useState(false);
+  const [cargandoSesion, setCargandoSesion] = useState(true);
   const [email, setEmail] = useState('');
   const [contrasena, setContrasena] = useState('');
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState('');
+
+  // Restaurar sesión desde localStorage al montar
+  useEffect(() => {
+    if (localStorage.getItem('admin_token') === 'demo_token') {
+      setAutenticado(true);
+    }
+    setCargandoSesion(false);
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,6 +47,14 @@ export default function AdminCentral() {
     setContrasena('');
     localStorage.removeItem('admin_token');
   };
+
+  if (cargandoSesion) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#0d2240] to-[#1a4f8b] flex items-center justify-center">
+        <p className="text-white text-lg">Cargando...</p>
+      </div>
+    );
+  }
 
   if (!autenticado) {
     return (
@@ -220,17 +238,28 @@ function ModuleCard({
   }[status];
 
   const isExternal = url.startsWith('http');
-  const Component = isExternal ? 'a' : 'a';
 
-  return (
-    <Component
-      href={status === 'active' ? url : '#'}
-      target={isExternal && status === 'active' ? '_blank' : undefined}
-      rel={isExternal && status === 'active' ? 'noopener noreferrer' : undefined}
-      className={`bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition-shadow ${
-        status === 'active' ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'
-      }`}
-    >
+  if (status !== 'active') {
+    return (
+      <div className="bg-white rounded-xl shadow-md overflow-hidden opacity-50 cursor-not-allowed">
+        <div className={`h-24 bg-gradient-to-r ${color} flex items-center justify-center`}>
+          <span className="text-5xl">{icon}</span>
+        </div>
+        <div className="p-6">
+          <div className="flex items-start justify-between mb-2">
+            <h3 className="text-lg font-bold text-[#0d2240]">{title}</h3>
+            <span className={`text-xs font-semibold px-2 py-1 rounded-full ${statusColor}`}>
+              {statusText}
+            </span>
+          </div>
+          <p className="text-sm text-gray-600">{description}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const cardContent = (
+    <>
       <div className={`h-24 bg-gradient-to-r ${color} flex items-center justify-center`}>
         <span className="text-5xl">{icon}</span>
       </div>
@@ -243,6 +272,22 @@ function ModuleCard({
         </div>
         <p className="text-sm text-gray-600">{description}</p>
       </div>
-    </Component>
+    </>
+  );
+
+  if (isExternal) {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer"
+        className="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition-shadow cursor-pointer">
+        {cardContent}
+      </a>
+    );
+  }
+
+  return (
+    <Link href={url}
+      className="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition-shadow cursor-pointer">
+      {cardContent}
+    </Link>
   );
 }
