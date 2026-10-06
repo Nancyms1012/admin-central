@@ -43,7 +43,7 @@ export default function AdminCentral() {
       <div className="min-h-screen bg-gradient-to-br from-[#0d2240] to-[#1a4f8b] flex items-center justify-center p-4">
         <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md">
           <h1 className="text-3xl font-bold text-[#0d2240] mb-2 text-center">Admin Central</h1>
-          <p className="text-gray-600 text-center mb-6">La Copa - Panel de Control</p>
+          <p className="text-gray-600 text-center mb-6">La Copa - VII Fecha Sarapiquí</p>
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>

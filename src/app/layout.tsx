@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Admin Central - La Copa',
-  description: 'Panel de control central para La Copa',
+  title: 'Admin Central - La Copa VII Fecha',
+  description: 'Panel de control central - VII Fecha Sarapiquí',
 };
 
 export default function RootLayout({
