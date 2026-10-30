@@ -3,68 +3,124 @@
 import { useState } from 'react';
 import Link from 'next/link';
 
-interface Usuario {
+interface FilaCSV {
+  cedula: string;
   dorsal: string;
   nombre: string;
   equipo: string;
   categoria: string;
 }
 
+interface Resultado {
+  asignados: number;
+  noEncontrados: string[];
+  filasInvalidas: number;
+  total: number;
+}
+
 export default function DorsalesPage() {
-  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const [filas, setFilas] = useState<FilaCSV[]>([]);
   const [cargando, setCargando] = useState(false);
   const [guardando, setGuardando] = useState(false);
-  const [evento, setEvento] = useState('XCO');
-  const [archivo, setArchivo] = useState<File | null>(null);
+  const [archivo, setArchivo] = useState<string | null>(null);
+  const [resultado, setResultado] = useState<Resultado | null>(null);
 
-  // Descargar plantilla CSV vacía
+  // Descargar plantilla CSV (separador ; porque Excel en CR usa punto y coma)
   const descargarPlantilla = () => {
-    const headers = ['dorsal', 'nombre', 'equipo', 'categoria'];
-    const filas = [
-      headers.join(','),
-      '101,Juan Pérez,Team A,Élite Masculino',
-      '102,María García,Team B,Élite Femenino',
-      '103,Carlos López,Team C,Máster A',
+    const filasCsv = [
+      'cedula;dorsal;nombre;equipo;categoria',
+      '210130539;101;Nombre Apellido;Equipo de ejemplo;Infantil Masculino',
+      '148400585008;102;Otro Nombre;Otro Equipo;Élite Femenino',
     ];
-    
-    const csv = filas.join('\n');
+    const csv = filasCsv.join('\r\n');
     const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `plantilla_dorsales_${evento}_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = 'plantilla_dorsales.csv';
     link.click();
     URL.revokeObjectURL(url);
   };
 
-  // Procesar archivo CSV
+  // Parsea una línea CSV respetando comillas. Acepta separador ; o ,
+  const parsearLinea = (linea: string, sep: string): string[] => {
+    const campos: string[] = [];
+    let actual = '';
+    let entreComillas = false;
+    for (let i = 0; i < linea.length; i++) {
+      const c = linea[i];
+      if (c === '"') {
+        if (entreComillas && linea[i + 1] === '"') {
+          actual += '"';
+          i++;
+        } else {
+          entreComillas = !entreComillas;
+        }
+      } else if (c === sep && !entreComillas) {
+        campos.push(actual);
+        actual = '';
+      } else {
+        actual += c;
+      }
+    }
+    campos.push(actual);
+    return campos.map((s) => s.trim());
+  };
+
+  // Procesar archivo CSV (solo lee y muestra preview; no guarda todavía)
   const manejarArchivo = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = ''; // permite volver a subir el mismo archivo
     if (!file) return;
 
-    setArchivo(file);
+    setArchivo(file.name);
     setCargando(true);
+    setResultado(null);
 
     try {
-      const texto = await file.text();
-      const lineas = texto.split('\n').filter((l) => l.trim());
-      const datos: Usuario[] = [];
+      let texto = await file.text();
+      // Quitar BOM de Excel
+      if (texto.charCodeAt(0) === 0xfeff) texto = texto.slice(1);
 
-      // Saltar encabezado
-      for (let i = 1; i < lineas.length; i++) {
-        const partes = lineas[i].split(',').map((p) => p.trim().replace(/^"|"$/g, ''));
-        if (partes.length >= 4 && partes[0]) {
-          datos.push({
-            dorsal: partes[0],
-            nombre: partes[1] || 'Por definir',
-            equipo: partes[2] || 'Por definir',
-            categoria: partes[3] || 'Por definir',
-          });
-        }
+      const lineas = texto.split(/\r?\n/).filter((l) => l.trim() !== '');
+      if (lineas.length === 0) {
+        alert('El archivo está vacío.');
+        setFilas([]);
+        return;
       }
 
-      setUsuarios(datos);
-      alert(`Se cargaron ${datos.length} dorsales`);
+      // Detectar separador: el que más aparezca en la primera línea (; o ,)
+      const primera = lineas[0];
+      const sep = (primera.split(';').length - 1) >= (primera.split(',').length - 1) ? ';' : ',';
+
+      // Detectar encabezado
+      const primeraMin = primera.toLowerCase();
+      const hayEncabezado =
+        primeraMin.includes('cedula') ||
+        primeraMin.includes('cédula') ||
+        primeraMin.includes('dorsal') ||
+        primeraMin.includes('identificacion');
+      const filasDatos = hayEncabezado ? lineas.slice(1) : lineas;
+
+      const datos: FilaCSV[] = [];
+      for (const linea of filasDatos) {
+        const cols = parsearLinea(linea, sep);
+        const cedula = (cols[0] || '').replace(/\s+/g, '');
+        const dorsal = (cols[1] || '').trim();
+        if (!cedula || !dorsal) continue;
+        datos.push({
+          cedula,
+          dorsal,
+          nombre: cols[2] || '',
+          equipo: cols[3] || '',
+          categoria: cols[4] || '',
+        });
+      }
+
+      setFilas(datos);
+      if (datos.length === 0) {
+        alert('No se encontraron filas válidas. Se esperan columnas: cédula ; dorsal ; nombre ; equipo ; categoría');
+      }
     } catch (err) {
       alert('Error al leer el archivo: ' + (err instanceof Error ? err.message : 'Desconocido'));
     } finally {
@@ -72,50 +128,57 @@ export default function DorsalesPage() {
     }
   };
 
-  // Guardar en Supabase
+  // Guardar: match por cédula contra la tabla `inscripciones` (la que lee el Control)
   const guardarEnSupabase = async () => {
-    if (usuarios.length === 0) {
+    if (filas.length === 0) {
       alert('No hay dorsales para guardar');
       return;
     }
 
-    if (!evento) {
-      alert('Selecciona un evento');
-      return;
-    }
-
     setGuardando(true);
+    setResultado(null);
     try {
       const { supabaseClient } = await import('@/lib/supabase-client');
 
-      // Convertir a formato de usuarios_evento
-      const filas = usuarios.map((u) => ({
-        evento: evento,
-        dorsal: u.dorsal,
-        nombre: u.nombre,
-        equipo: u.equipo,
-        categoria: u.categoria,
-      }));
-
-      // Eliminar dorsales antiguos del evento antes de cargar nuevos
-      await supabaseClient
-        .from('usuarios_evento')
-        .delete()
-        .eq('evento', evento);
-
-      // Insertar nuevos
-      const { error } = await supabaseClient
-        .from('usuarios_evento')
-        .insert(filas);
-
-      if (error) {
-        alert('Error al guardar: ' + error.message);
+      // Traer las cédulas existentes para saber cuáles no hacen match
+      const { data: existentes, error: errExist } = await supabaseClient
+        .from('inscripciones')
+        .select('numero_identificacion');
+      if (errExist) {
+        alert('Error consultando inscripciones: ' + errExist.message);
         return;
       }
+      const setCedulas = new Set(
+        (existentes || []).map((r: { numero_identificacion: string }) =>
+          (r.numero_identificacion || '').replace(/\s+/g, '')
+        )
+      );
 
-      alert(`✓ Se guardaron ${usuarios.length} dorsales para ${evento}`);
-      setUsuarios([]);
-      setArchivo(null);
+      let asignados = 0;
+      const noEncontrados: string[] = [];
+
+      for (const { cedula, dorsal } of filas) {
+        if (!setCedulas.has(cedula)) {
+          noEncontrados.push(cedula);
+          continue;
+        }
+        const { error: errUpd } = await supabaseClient
+          .from('inscripciones')
+          .update({ dorsal })
+          .eq('numero_identificacion', cedula);
+        if (errUpd) {
+          noEncontrados.push(cedula + ' (error al guardar)');
+        } else {
+          asignados++;
+        }
+      }
+
+      setResultado({
+        asignados,
+        noEncontrados,
+        filasInvalidas: 0,
+        total: filas.length,
+      });
     } catch (err) {
       alert('Error: ' + (err instanceof Error ? err.message : 'Desconocido'));
     } finally {
@@ -130,7 +193,7 @@ export default function DorsalesPage() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold text-[#0d2240]">Gestión de Dorsales</h1>
-            <p className="text-gray-600">Carga y asignación de dorsales por evento</p>
+            <p className="text-gray-600">Asignación de dorsales por cédula (tabla de inscripciones)</p>
           </div>
           <Link
             href="/"
@@ -145,19 +208,6 @@ export default function DorsalesPage() {
           <div className="lg:col-span-2 bg-white rounded-xl shadow-md p-6">
             <h2 className="text-lg font-bold text-[#0d2240] mb-4">Cargar dorsales</h2>
 
-            {/* Selector de evento */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Evento</label>
-              <select
-                value={evento}
-                onChange={(e) => setEvento(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1a4f8b]"
-              >
-                <option value="XCO">XCO (Cross-Country)</option>
-                <option value="XCC">XCC (Short Track)</option>
-              </select>
-            </div>
-
             {/* Área de carga */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -165,14 +215,18 @@ export default function DorsalesPage() {
               </label>
               <input
                 type="file"
-                accept=".csv"
+                accept=".csv,text/csv"
                 onChange={manejarArchivo}
-                disabled={cargando}
+                disabled={cargando || guardando}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1a4f8b] disabled:opacity-50"
               />
               <p className="text-xs text-gray-500 mt-2">
-                Formato: dorsal, nombre, equipo, categoría (sin encabezado en filas de datos)
+                Columnas: <strong>cédula ; dorsal ; nombre ; equipo ; categoría</strong>.
+                El match se hace por cédula. Acepta separador <strong>;</strong> o <strong>,</strong>.
               </p>
+              {archivo && (
+                <p className="text-xs text-gray-600 mt-1">Archivo: {archivo}</p>
+              )}
             </div>
 
             {/* Botones */}
@@ -185,10 +239,10 @@ export default function DorsalesPage() {
               </button>
               <button
                 onClick={guardarEnSupabase}
-                disabled={guardando || usuarios.length === 0}
+                disabled={guardando || cargando || filas.length === 0}
                 className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm"
               >
-                {guardando ? 'Guardando...' : `✓ Guardar ${usuarios.length} dorsales`}
+                {guardando ? 'Guardando...' : `✓ Guardar ${filas.length} dorsales`}
               </button>
             </div>
           </div>
@@ -198,27 +252,67 @@ export default function DorsalesPage() {
             <h2 className="text-lg font-bold text-[#0d2240] mb-4">Resumen</h2>
             <div className="space-y-3">
               <div>
-                <p className="text-gray-600 text-sm">Evento</p>
-                <p className="text-2xl font-bold text-[#0d2240]">{evento}</p>
-              </div>
-              <div>
-                <p className="text-gray-600 text-sm">Dorsales cargados</p>
-                <p className="text-2xl font-bold text-green-600">{usuarios.length}</p>
+                <p className="text-gray-600 text-sm">Dorsales en el archivo</p>
+                <p className="text-2xl font-bold text-green-600">{filas.length}</p>
               </div>
               <div className="bg-blue-50 p-3 rounded-lg text-xs text-gray-600 mt-4">
                 <p className="font-semibold mb-2">📋 Instrucciones:</p>
                 <ol className="list-decimal pl-4 space-y-1">
                   <li>Descarga la plantilla</li>
-                  <li>Completa dorsal, nombre, equipo, categoría</li>
-                  <li>Selecciona el archivo y haz clic en "Guardar"</li>
+                  <li>Completa cédula, dorsal, nombre, equipo, categoría</li>
+                  <li>Selecciona el archivo y revisa el preview</li>
+                  <li>Haz clic en &quot;Guardar&quot;</li>
                 </ol>
+                <p className="mt-2">El dorsal se asigna a la inscripción con esa cédula.</p>
               </div>
             </div>
           </div>
         </div>
 
+        {/* Resultado de guardado */}
+        {resultado && (
+          <div className="mt-6 bg-white rounded-xl shadow-md overflow-hidden">
+            <div className="bg-amber-500 text-white px-6 py-4">
+              <h2 className="font-bold text-lg">Resultado de la carga</h2>
+            </div>
+            <div className="p-6 space-y-4 text-sm">
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="bg-green-50 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-green-700">{resultado.asignados}</p>
+                  <p className="text-gray-600 text-xs">Dorsales asignados</p>
+                </div>
+                <div className="bg-red-50 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-red-700">{resultado.noEncontrados.length}</p>
+                  <p className="text-gray-600 text-xs">Cédulas sin match</p>
+                </div>
+                <div className="bg-gray-100 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-gray-700">{resultado.total}</p>
+                  <p className="text-gray-600 text-xs">Filas procesadas</p>
+                </div>
+              </div>
+              {resultado.noEncontrados.length > 0 && (
+                <div>
+                  <p className="font-semibold text-red-700 mb-1">
+                    Cédulas que NO se encontraron en inscripciones:
+                  </p>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 max-h-48 overflow-y-auto">
+                    <ul className="list-disc list-inside text-red-800 space-y-0.5">
+                      {resultado.noEncontrados.map((c, i) => (
+                        <li key={i} className="font-mono text-xs">{c}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Revisá que la cédula esté escrita igual que en la inscripción. Esos dorsales no se asignaron.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Tabla de preview */}
-        {usuarios.length > 0 && (
+        {filas.length > 0 && (
           <div className="mt-6 bg-white rounded-xl shadow-md overflow-hidden">
             <div className="p-6 border-b border-gray-200">
               <h2 className="text-lg font-bold text-[#0d2240]">Preview - Dorsales a cargar</h2>
@@ -227,6 +321,7 @@ export default function DorsalesPage() {
               <table className="w-full text-sm">
                 <thead className="bg-gray-100">
                   <tr>
+                    <th className="px-4 py-2 text-left font-semibold text-gray-700">Cédula</th>
                     <th className="px-4 py-2 text-left font-semibold text-gray-700">Dorsal</th>
                     <th className="px-4 py-2 text-left font-semibold text-gray-700">Nombre</th>
                     <th className="px-4 py-2 text-left font-semibold text-gray-700">Equipo</th>
@@ -234,8 +329,9 @@ export default function DorsalesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {usuarios.slice(0, 20).map((u) => (
-                    <tr key={u.dorsal} className="border-b border-gray-200 hover:bg-gray-50">
+                  {filas.slice(0, 20).map((u, idx) => (
+                    <tr key={`${u.cedula}-${idx}`} className="border-b border-gray-200 hover:bg-gray-50">
+                      <td className="px-4 py-2 font-mono text-xs">{u.cedula}</td>
                       <td className="px-4 py-2 font-bold text-lg text-[#0d2240]">{u.dorsal}</td>
                       <td className="px-4 py-2">{u.nombre}</td>
                       <td className="px-4 py-2">{u.equipo}</td>
@@ -244,9 +340,9 @@ export default function DorsalesPage() {
                   ))}
                 </tbody>
               </table>
-              {usuarios.length > 20 && (
+              {filas.length > 20 && (
                 <div className="p-4 bg-gray-50 text-center text-sm text-gray-600">
-                  ... y {usuarios.length - 20} más
+                  ... y {filas.length - 20} más
                 </div>
               )}
             </div>
