@@ -42,6 +42,23 @@ export default function DorsalesPage() {
     URL.revokeObjectURL(url);
   };
 
+  // Lee el archivo respetando su codificación. Excel en Windows suele guardar
+  // en Windows-1252 (Latin-1); si lo leemos como UTF-8 los acentos/ñ salen como "�".
+  // Estrategia: leer bytes, intentar UTF-8 estricto; si falla, decodificar Windows-1252.
+  const leerArchivoTexto = async (file: File): Promise<string> => {
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    // 1) Intentar UTF-8 estricto (lanza error si hay bytes inválidos)
+    try {
+      const txt = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      return txt.charCodeAt(0) === 0xfeff ? txt.slice(1) : txt;
+    } catch {
+      // 2) No era UTF-8 válido -> tratarlo como Windows-1252 (Excel de Windows)
+      const txt = new TextDecoder('windows-1252').decode(bytes);
+      return txt.charCodeAt(0) === 0xfeff ? txt.slice(1) : txt;
+    }
+  };
+
   // Parsea una línea CSV respetando comillas. Acepta separador ; o ,
   const parsearLinea = (linea: string, sep: string): string[] => {
     const campos: string[] = [];
@@ -78,9 +95,8 @@ export default function DorsalesPage() {
     setResultado(null);
 
     try {
-      let texto = await file.text();
-      // Quitar BOM de Excel
-      if (texto.charCodeAt(0) === 0xfeff) texto = texto.slice(1);
+      // Leer con la codificación correcta (UTF-8 o Windows-1252 de Excel)
+      const texto = await leerArchivoTexto(file);
 
       const lineas = texto.split(/\r?\n/).filter((l) => l.trim() !== '');
       if (lineas.length === 0) {
