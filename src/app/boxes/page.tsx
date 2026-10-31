@@ -27,17 +27,16 @@ export default function BoxesPage() {
   const [filtroHora, setFiltroHora] = useState('');
   const [filtroBox, setFiltroBox] = useState('');
 
-  // Descargar plantilla CSV
+  // Descargar plantilla CSV (separador ; porque Excel en CR usa punto y coma)
   const descargarPlantilla = () => {
-    const headers = ['dorsal', 'nombre', 'categoria', 'box', 'hora_salida', 'orden'];
     const filas = [
-      headers.join(','),
-      '101,Juan Pérez,Élite Masculino,BOX 1,08:00,1',
-      '102,María García,Élite Femenino,BOX 1,08:00,2',
-      '103,Carlos López,Máster A,BOX 2,08:35,1',
+      'dorsal;nombre;categoria;box;hora_salida;orden',
+      '101;Juan Pérez;Élite Masculino;BOX 1;08:00;1',
+      '102;María García;Élite Femenino;BOX 1;08:00;2',
+      '103;Carlos López;Máster A Masculino;BOX 2;08:35;1',
     ];
 
-    const csv = filas.join('\n');
+    const csv = filas.join('\r\n');
     const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -47,22 +46,63 @@ export default function BoxesPage() {
     URL.revokeObjectURL(url);
   };
 
+  // Lee el archivo respetando su codificación (UTF-8 o Windows-1252 de Excel)
+  const leerArchivoTexto = async (file: File): Promise<string> => {
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    try {
+      const txt = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      return txt.charCodeAt(0) === 0xfeff ? txt.slice(1) : txt;
+    } catch {
+      const txt = new TextDecoder('windows-1252').decode(bytes);
+      return txt.charCodeAt(0) === 0xfeff ? txt.slice(1) : txt;
+    }
+  };
+
+  // Parsea una línea CSV respetando comillas. Acepta separador ; o ,
+  const parsearLinea = (linea: string, sep: string): string[] => {
+    const campos: string[] = [];
+    let actual = '';
+    let entreComillas = false;
+    for (let i = 0; i < linea.length; i++) {
+      const c = linea[i];
+      if (c === '"') {
+        if (entreComillas && linea[i + 1] === '"') { actual += '"'; i++; }
+        else entreComillas = !entreComillas;
+      } else if (c === sep && !entreComillas) {
+        campos.push(actual); actual = '';
+      } else actual += c;
+    }
+    campos.push(actual);
+    return campos.map((s) => s.trim());
+  };
+
   // Procesar archivo CSV
   const manejarArchivo = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
     setArchivo(file);
     setCargando(true);
 
     try {
-      const texto = await file.text();
-      const lineas = texto.split('\n').filter((l) => l.trim());
-      const datos: Box[] = [];
+      const texto = await leerArchivoTexto(file);
+      const lineas = texto.split(/\r?\n/).filter((l) => l.trim());
+      if (lineas.length === 0) { alert('El archivo está vacío.'); setBoxes([]); return; }
 
-      // Saltar encabezado
-      for (let i = 1; i < lineas.length; i++) {
-        const partes = lineas[i].split(',').map((p) => p.trim().replace(/^"|"$/g, ''));
+      // Detectar separador ; o ,
+      const primera = lineas[0];
+      const sep = (primera.split(';').length - 1) >= (primera.split(',').length - 1) ? ';' : ',';
+
+      // Detectar encabezado
+      const primeraMin = primera.toLowerCase();
+      const hayEncabezado = primeraMin.includes('dorsal') || primeraMin.includes('box') || primeraMin.includes('hora');
+      const filasDatos = hayEncabezado ? lineas.slice(1) : lineas;
+
+      const datos: Box[] = [];
+      for (const linea of filasDatos) {
+        const partes = parsearLinea(linea, sep);
         if (partes.length >= 6 && partes[0]) {
           datos.push({
             dorsal: partes[0],
@@ -78,7 +118,11 @@ export default function BoxesPage() {
       }
 
       setBoxes(datos);
-      alert(`Se cargaron ${datos.length} boxes`);
+      if (datos.length === 0) {
+        alert('No se encontraron filas válidas. Se esperan 6 columnas: dorsal ; nombre ; categoría ; box ; hora_salida ; orden');
+      } else {
+        alert(`Se cargaron ${datos.length} boxes`);
+      }
     } catch (err) {
       alert('Error al leer el archivo: ' + (err instanceof Error ? err.message : 'Desconocido'));
     } finally {
@@ -163,7 +207,7 @@ export default function BoxesPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1a4f8b] disabled:opacity-50"
               />
               <p className="text-xs text-gray-500 mt-2">
-                Formato: dorsal, nombre, categoría, box, hora_salida, orden
+                Formato: dorsal ; nombre ; categoría ; box ; hora_salida ; orden (acepta ; o ,)
               </p>
             </div>
 
