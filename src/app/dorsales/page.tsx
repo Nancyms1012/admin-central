@@ -24,6 +24,13 @@ export default function DorsalesPage() {
   const [guardando, setGuardando] = useState(false);
   const [archivo, setArchivo] = useState<string | null>(null);
   const [resultado, setResultado] = useState<Resultado | null>(null);
+  // Ingreso manual de un dorsal
+  const [manCedula, setManCedula] = useState('');
+  const [manDorsal, setManDorsal] = useState('');
+  const [manCategorias, setManCategorias] = useState<string[]>([]); // categorías que tiene esa cédula
+  const [manCategoriaSel, setManCategoriaSel] = useState('');
+  const [manInfo, setManInfo] = useState<string | null>(null);
+  const [manGuardando, setManGuardando] = useState(false);
 
   // Descargar plantilla CSV (separador ; porque Excel en CR usa punto y coma)
   const descargarPlantilla = () => {
@@ -221,6 +228,75 @@ export default function DorsalesPage() {
     }
   };
 
+  // Buscar las inscripciones de una cédula (para el ingreso manual)
+  const buscarCedulaManual = async () => {
+    const ced = manCedula.replace(/\s+/g, '');
+    setManInfo(null);
+    setManCategorias([]);
+    setManCategoriaSel('');
+    if (!ced) return;
+    try {
+      const { supabaseClient } = await import('@/lib/supabase-client');
+      const { data, error } = await supabaseClient
+        .from('inscripciones')
+        .select('nombre, primer_apellido, categoria')
+        .eq('numero_identificacion', ced);
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        setManInfo(`⚠️ No se encontró ninguna inscripción con la cédula ${ced}.`);
+        return;
+      }
+      const cats = data.map((r: { categoria: string }) => r.categoria);
+      setManCategorias(cats);
+      const nom = `${data[0].nombre} ${data[0].primer_apellido}`.trim();
+      if (cats.length === 1) {
+        setManCategoriaSel(cats[0]);
+        setManInfo(`✓ ${nom} · ${cats[0]}`);
+      } else {
+        setManInfo(`${nom} tiene ${cats.length} inscripciones. Elegí la categoría.`);
+      }
+    } catch (err) {
+      setManInfo('Error buscando la cédula: ' + (err instanceof Error ? err.message : 'desconocido'));
+    }
+  };
+
+  // Guardar manualmente un dorsal para una cédula (y categoría si tiene varias)
+  const guardarDorsalManual = async () => {
+    const ced = manCedula.replace(/\s+/g, '');
+    const dor = manDorsal.trim();
+    if (!ced || !dor) {
+      alert('Ingresá cédula y dorsal');
+      return;
+    }
+    if (manCategorias.length === 0) {
+      alert('Primero buscá la cédula (botón Buscar)');
+      return;
+    }
+    if (manCategorias.length > 1 && !manCategoriaSel) {
+      alert('Esta persona tiene varias inscripciones: elegí la categoría');
+      return;
+    }
+    setManGuardando(true);
+    try {
+      const { supabaseClient } = await import('@/lib/supabase-client');
+      let query = supabaseClient.from('inscripciones').update({ dorsal: dor }).eq('numero_identificacion', ced);
+      if (manCategorias.length > 1) {
+        query = query.eq('categoria', manCategoriaSel);
+      }
+      const { error } = await query;
+      if (error) throw error;
+      setManInfo(`✅ Dorsal ${dor} asignado a ${ced}${manCategorias.length > 1 ? ' · ' + manCategoriaSel : ''}.`);
+      setManCedula('');
+      setManDorsal('');
+      setManCategorias([]);
+      setManCategoriaSel('');
+    } catch (err) {
+      alert('Error al guardar: ' + (err instanceof Error ? err.message : 'desconocido'));
+    } finally {
+      setManGuardando(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-6xl mx-auto">
@@ -299,6 +375,59 @@ export default function DorsalesPage() {
                   <li>Haz clic en &quot;Guardar&quot;</li>
                 </ol>
                 <p className="mt-2">El dorsal se asigna a la inscripción con esa cédula.</p>
+              </div>
+
+              {/* Ingreso manual de un dorsal */}
+              <div className="border-t border-gray-200 pt-4 mt-4">
+                <p className="font-semibold text-[#0d2240] text-sm mb-2">➕ Agregar dorsal manual</p>
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={manCedula}
+                      onChange={(e) => setManCedula(e.target.value)}
+                      placeholder="Cédula"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    />
+                    <button
+                      onClick={buscarCedulaManual}
+                      className="bg-gray-600 text-white px-3 py-2 rounded-lg hover:bg-gray-700 text-sm whitespace-nowrap"
+                    >
+                      Buscar
+                    </button>
+                  </div>
+                  {manInfo && (
+                    <p className={`text-xs rounded-lg p-2 ${manInfo.startsWith('⚠️') || manInfo.startsWith('Error') ? 'bg-amber-50 text-amber-800' : manInfo.startsWith('✅') ? 'bg-green-50 text-green-800' : 'bg-blue-50 text-blue-800'}`}>
+                      {manInfo}
+                    </p>
+                  )}
+                  {manCategorias.length > 1 && (
+                    <select
+                      value={manCategoriaSel}
+                      onChange={(e) => setManCategoriaSel(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    >
+                      <option value="">Elegí la categoría...</option>
+                      {manCategorias.map((c, i) => (
+                        <option key={i} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  )}
+                  <input
+                    type="text"
+                    value={manDorsal}
+                    onChange={(e) => setManDorsal(e.target.value)}
+                    placeholder="Dorsal"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <button
+                    onClick={guardarDorsalManual}
+                    disabled={manGuardando || manCategorias.length === 0}
+                    className="w-full bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+                  >
+                    {manGuardando ? 'Guardando...' : '✓ Asignar dorsal'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
