@@ -156,32 +156,51 @@ export default function DorsalesPage() {
     try {
       const { supabaseClient } = await import('@/lib/supabase-client');
 
-      // Traer las cédulas existentes para saber cuáles no hacen match
+      // Traer cédula + categoría de todas las inscripciones.
+      // Una persona puede tener VARIAS filas (ej. Máster + Cyclocross con la misma cédula);
+      // por eso, cuando hay varias, el dorsal se asigna a la que coincida con la CATEGORÍA del CSV.
       const { data: existentes, error: errExist } = await supabaseClient
         .from('inscripciones')
-        .select('numero_identificacion');
+        .select('numero_identificacion, categoria');
       if (errExist) {
         alert('Error consultando inscripciones: ' + errExist.message);
         return;
       }
-      const setCedulas = new Set(
-        (existentes || []).map((r: { numero_identificacion: string }) =>
-          (r.numero_identificacion || '').replace(/\s+/g, '')
-        )
-      );
+      // cédula -> lista de categorías que tiene esa cédula
+      const porCedula = new Map<string, string[]>();
+      (existentes || []).forEach((r: { numero_identificacion: string; categoria: string }) => {
+        const c = (r.numero_identificacion || '').replace(/\s+/g, '');
+        if (!porCedula.has(c)) porCedula.set(c, []);
+        porCedula.get(c)!.push(r.categoria || '');
+      });
+
+      const norm = (s: string) => s.trim().toLowerCase();
 
       let asignados = 0;
       const noEncontrados: string[] = [];
 
-      for (const { cedula, dorsal } of filas) {
-        if (!setCedulas.has(cedula)) {
+      for (const { cedula, dorsal, categoria } of filas) {
+        const cats = porCedula.get(cedula);
+        if (!cats) {
           noEncontrados.push(cedula);
           continue;
         }
-        const { error: errUpd } = await supabaseClient
-          .from('inscripciones')
-          .update({ dorsal })
-          .eq('numero_identificacion', cedula);
+
+        const tieneVarias = cats.length > 1;
+        let query = supabaseClient.from('inscripciones').update({ dorsal }).eq('numero_identificacion', cedula);
+
+        if (tieneVarias) {
+          // Hay varias inscripciones con esta cédula -> hace falta la categoría del CSV para no pisar
+          const catCsv = (categoria || '').trim();
+          const coincide = cats.some((c) => norm(c) === norm(catCsv));
+          if (!catCsv || !coincide) {
+            noEncontrados.push(`${cedula} (tiene varias categorías; la del CSV "${catCsv || '—'}" no coincide)`);
+            continue;
+          }
+          query = query.eq('categoria', catCsv);
+        }
+
+        const { error: errUpd } = await query;
         if (errUpd) {
           noEncontrados.push(cedula + ' (error al guardar)');
         } else {
